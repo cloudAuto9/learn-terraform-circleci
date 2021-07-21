@@ -1,71 +1,78 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "3.44.0"
-    }
-  }
-  required_version = "> 0.14"
-}
-
 provider "aws" {
-  region = var.region
+  region     = var.region
+  access_key = var.access_key
+  secret_key = var.secret_key
 }
 
-resource "random_uuid" "randomid" {}
-
-resource "aws_iam_user" "circleci" {
-  name = var.user
-  path = "/system/"
+  backend "s3" {
+    bucket = "circle-ci-backend-20210721111750722900000001"
+    key    = "terraform/ap4/terraform.tfstate"
+    region = "us-east-1"
 }
 
-resource "aws_iam_access_key" "circleci" {
-  user = aws_iam_user.circleci.name
-}
-
-data "template_file" "circleci_policy" {
-  template = file("circleci_s3_access.tpl.json")
-  vars = {
-    s3_bucket_arn = aws_s3_bucket.app.arn
+ module "web-server" {
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "2.19.0"
+  name                   = "${var.env_name}-web-server"
+  instance_count         = 1
+  ami                    = var.web_ami
+  instance_type          = var.webserver_instance_type
+  key_name               = var.key_name
+  monitoring             = false
+  associate_public_ip_address = true
+  vpc_security_group_ids = [var.web_security_group_ids]
+  subnet_id              = var.public_subnet_id
+  root_block_device = [
+    {
+      volume_type = "gp2"
+      volume_size = 30
+    },
+  ]
+ tags = {
+    Env = var.env_name
   }
 }
-
-resource "local_file" "circle_credentials" {
-  filename = "tmp/circleci_credentials"
-  content  = "${aws_iam_access_key.circleci.id}\n${aws_iam_access_key.circleci.secret}"
-}
-
-resource "aws_iam_user_policy" "circleci" {
-  name   = "AllowCircleCI"
-  user   = aws_iam_user.circleci.name
-  policy = data.template_file.circleci_policy.rendered
-}
-
-resource "aws_s3_bucket" "app" {
+####################
+ module "app-server" {
+    source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "2.19.0"
+  name                   = "${var.env_name}-app-server"
+  instance_count         = 1
+  ami                    = var.app_ami
+  instance_type          = var.appserver_instance_type
+  key_name               = var.key_name
+  monitoring             = false
+  vpc_security_group_ids = [var.app_security_group_ids]
+  subnet_id              = var.private_subnet_id
+  root_block_device = [
+    {
+      volume_type = "gp2"
+      volume_size = 30
+    },
+  ]
   tags = {
-    Name = "App Bucket"
+    Env = var.env_name
   }
-
-  bucket = "${var.app}.${var.label}.${random_uuid.randomid.result}"
-  acl    = "public-read"
-
-  website {
-    index_document = "index.html"
-    error_document = "error.html"
-  }
-  force_destroy = true
-
 }
 
-resource "aws_s3_bucket_object" "app" {
-  acl          = "public-read"
-  key          = "index.html"
-  bucket       = aws_s3_bucket.app.id
-  content      = file("./assets/index.html")
-  content_type = "text/html"
-
-}
-
-output "Endpoint" {
-  value = aws_s3_bucket.app.website_endpoint
+module "db-server" {
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "2.19.0"
+  name                   = "${var.env_name}-db-server"
+  instance_count         = 1
+  ami                    = var.db_ami
+  instance_type          = var.dbserver_instance_type
+  key_name               = var.key_name
+  monitoring             = false
+  vpc_security_group_ids = [var.db_security_group_ids]
+  subnet_id              = var.db_subnet_id
+  root_block_device = [
+    {
+      volume_type = "gp2"
+      volume_size = 30
+    },
+  ]
+ tags = {
+    Env = var.env_name
+  }
 }
